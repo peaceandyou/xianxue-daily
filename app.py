@@ -29,7 +29,7 @@ if not api_key:
         placeholder="sk-ant-oat01-...",
     )
 
-# ── 热点抓取 ──────────────────────────────
+# ── 热点抓取（每条带来源标签）────────────
 def get_weibo_hot():
     topics = []
     try:
@@ -44,7 +44,7 @@ def get_weibo_hot():
         for item in r.json().get("data", {}).get("band_list", [])[:20]:
             w = item.get("word", "").strip()
             if w:
-                topics.append(w)
+                topics.append({"topic": w, "source": "微博热搜"})
     except Exception:
         pass
     return topics
@@ -66,7 +66,7 @@ def get_baidu_hot():
                 for item in items[:20]:
                     t = item.get_text(strip=True)
                     if t and len(t) > 1:
-                        topics.append(t)
+                        topics.append({"topic": t, "source": "百度热搜"})
                 break
     except Exception:
         pass
@@ -75,11 +75,30 @@ def get_baidu_hot():
 
 def collect_topics():
     seen, result = set(), []
-    for t in get_weibo_hot() + get_baidu_hot():
+    for item in get_weibo_hot() + get_baidu_hot():
+        t = item["topic"]
         if t and t not in seen:
             seen.add(t)
-            result.append(t)
+            result.append(item)
     return result
+
+
+# ── 热点列表展示 ──────────────────────────
+SOURCE_STYLE = {
+    "微博热搜": ("🔴", "#ff4b4b"),
+    "百度热搜": ("🔵", "#4b8bff"),
+}
+
+def show_topics(topics):
+    st.markdown(f"**共获取到 {len(topics)} 条热点**")
+    cols = st.columns(2)
+    for i, item in enumerate(topics[:20]):
+        icon, color = SOURCE_STYLE.get(item["source"], ("⚪", "#888"))
+        cols[i % 2].markdown(
+            f"{i+1}. {item['topic']} "
+            f"<span style='font-size:11px;color:{color};'>{icon} {item['source']}</span>",
+            unsafe_allow_html=True,
+        )
 
 
 # ── AI 调用（流式）────────────────────────
@@ -120,10 +139,13 @@ def call_ai(prompt, key, placeholder):
     return full_text
 
 
-# ── 今日热点创意 Prompt ───────────────────
+# ── Prompt：今日热点创意 ──────────────────
 def prompt_auto(topics):
     today = datetime.now().strftime("%Y年%m月%d日")
-    topic_list = "\n".join(f"{i+1}. {t}" for i, t in enumerate(topics[:25]))
+    topic_list = "\n".join(
+        f"{i+1}. {item['topic']}（{item['source']}）"
+        for i, item in enumerate(topics[:25])
+    )
     return f"""今天是{today}，以下是今日各平台热搜话题：
 {topic_list}
 
@@ -148,7 +170,7 @@ def prompt_auto(topics):
 ③ [标题3]"""
 
 
-# ── 指定热点创意 Prompt ───────────────────
+# ── Prompt：指定热点创意 ──────────────────
 def prompt_custom(topic):
     return f"""热点话题：「{topic}」
 
@@ -175,7 +197,7 @@ def prompt_custom(topic):
 
 
 # ════════════════════════════════════════════
-# 标题
+# 页面标题
 # ════════════════════════════════════════════
 st.title("🩸 献血新媒体创意助手")
 st.caption("自动抓取热点 · 生成创意方向 · 推荐吸睛主题")
@@ -193,10 +215,10 @@ st.subheader("📡 今日热点创意")
 st.caption("自动从微博、百度获取当日热点，AI 分析创意方向与主题建议")
 
 c1, c2 = st.columns(2)
-fetch_btn  = c1.button("🚀 获取热点并生成创意", type="primary", use_container_width=True)
-regen_btn  = c2.button("🔄 重新生成",
-                        use_container_width=True,
-                        disabled=not st.session_state.topics)
+fetch_btn = c1.button("🚀 获取热点并生成创意", type="primary", use_container_width=True)
+regen_btn = c2.button("🔄 重新生成",
+                       use_container_width=True,
+                       disabled=not st.session_state.topics)
 
 # 点「获取热点并生成」
 if fetch_btn:
@@ -221,14 +243,13 @@ elif regen_btn and st.session_state.topics:
             prompt_auto(st.session_state.topics), api_key, ph
         )
 
-# 显示热点列表
+# 热点列表：直接展示，不折叠
 if st.session_state.topics:
-    with st.expander(f"📊 今日热点（共 {len(st.session_state.topics)} 条，点击展开）"):
-        cols = st.columns(2)
-        for i, t in enumerate(st.session_state.topics[:20]):
-            cols[i % 2].write(f"{i+1}. {t}")
+    st.markdown("---")
+    show_topics(st.session_state.topics)
+    st.markdown("---")
 
-# 显示创意结果
+# 创意结果
 if st.session_state.auto_result:
     st.markdown(st.session_state.auto_result)
     st.download_button(
