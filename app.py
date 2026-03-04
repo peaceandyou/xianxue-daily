@@ -4,6 +4,7 @@ from bs4 import BeautifulSoup
 from datetime import datetime
 import json
 import re
+from urllib.parse import quote
 
 # ── 页面设置 ──────────────────────────────────
 st.set_page_config(page_title="献血新媒体创意助手", page_icon="🩸", layout="centered")
@@ -98,6 +99,26 @@ def collect_topics():
     return result
 
 
+def filter_health_topics(topics, key):
+    """用 AI 筛选出大健康相关热点"""
+    if not topics:
+        return []
+    topic_list = "\n".join(f"{i+1}. {t['topic']}" for i, t in enumerate(topics))
+    prompt = f"""热搜话题列表：
+{topic_list}
+
+请从中选出与"大健康"相关的话题编号。
+大健康包括：医疗、疾病、药品、公共卫生、营养饮食、运动健身、心理健康、生育母婴、老龄化、血液献血、医保政策、食品安全、中医养生等。
+只输出符合条件的编号，用英文逗号分隔，例如：1,4,7
+没有符合的则输出：无"""
+    result = call_ai(prompt, key, max_tokens=100)
+    if not result or result.strip() == "无":
+        return []
+    nums = re.findall(r"\d+", result)
+    indices = [int(n) - 1 for n in nums if 0 < int(n) <= len(topics)]
+    return [topics[i] for i in sorted(set(indices))]
+
+
 # ══════════════════════════════════════════════
 # 热点列表展示（可折叠）
 # ══════════════════════════════════════════════
@@ -107,14 +128,24 @@ SOURCE_BADGE = {
     "抖音热搜": ("#333333", "⚫"),
 }
 
+def get_topic_url(topic, source):
+    q = quote(topic)
+    if source == "微博热搜":
+        return f"https://s.weibo.com/weibo?q={q}"
+    elif source == "抖音热搜":
+        return f"https://www.douyin.com/search/{q}"
+    return f"https://www.baidu.com/s?wd={q}"
+
+
 def show_topics_box(topics):
-    label = f"📊 今日热点（共 {len(topics)} 条，点击展开 / 收起）"
+    label = f"📊 大健康相关热点（共 {len(topics)} 条，点击展开 / 收起）"
     with st.expander(label, expanded=False):
         cols = st.columns(2)
         for i, item in enumerate(topics):
             color, icon = SOURCE_BADGE.get(item["source"], ("#888", "⚪"))
+            url = get_topic_url(item["topic"], item["source"])
             cols[i % 2].markdown(
-                f"{i+1}. {item['topic']} "
+                f"{i+1}. [{item['topic']}]({url}) "
                 f"<span style='font-size:11px;color:{color}'>{icon} {item['source']}</span>",
                 unsafe_allow_html=True,
             )
@@ -123,11 +154,11 @@ def show_topics_box(topics):
 # ══════════════════════════════════════════════
 # AI 调用（流式，可选 placeholder）
 # ══════════════════════════════════════════════
-def call_ai(prompt, key, placeholder=None):
+def call_ai(prompt, key, placeholder=None, max_tokens=2000):
     resp = requests.post(
         "https://code.newcli.com/claude/v1/chat/completions",
         headers={"Authorization": f"Bearer {key}", "content-type": "application/json"},
-        json={"model": "gpt-5", "max_tokens": 2000, "stream": True,
+        json={"model": "gpt-5", "max_tokens": max_tokens, "stream": True,
               "messages": [{"role": "user", "content": prompt}]},
         stream=True, timeout=120,
     )
@@ -194,8 +225,14 @@ def show_idea_card(idea, idx, regen_key_prefix="auto"):
     with st.container(border=True):
         col_title, col_btn = st.columns([5, 1])
         with col_title:
+            hot_topic = idea.get("hot_topic", "")
+            source = next(
+                (t["source"] for t in st.session_state.get("topics", []) if t["topic"] == hot_topic),
+                "百度热搜",
+            )
+            t_url = get_topic_url(hot_topic, source)
             st.markdown(
-                f"**{idea.get('hot_topic', '')}** &emsp;"
+                f"**[{hot_topic}]({t_url})** &emsp;"
                 f"{stars_str(idea.get('stars', 3))} "
                 f"<span style='color:#888;font-size:12px'>（关联度 {idea.get('stars',3)}/5）</span>",
                 unsafe_allow_html=True,
@@ -349,10 +386,17 @@ regen_all_btn = c2.button("🔄 全部重新生成", use_container_width=True,
 
 if fetch_btn:
     with st.spinner("📡 正在抓取微博 / 百度 / 抖音热点..."):
-        st.session_state.topics = collect_topics()
-    if not st.session_state.topics:
+        all_topics = collect_topics()
+    if not all_topics:
         st.error("热点获取失败，请检查网络后重试。")
     else:
+        with st.spinner("🔍 AI 正在筛选大健康相关热点..."):
+            health_topics = filter_health_topics(all_topics, api_key)
+        if health_topics:
+            st.session_state.topics = health_topics
+        else:
+            st.session_state.topics = all_topics
+            st.warning("未找到大健康相关热点，显示全部热点供参考。")
         ph = st.empty()
         ph.info("💡 AI 正在分析创意，请稍候（约 20 秒）...")
         raw = call_ai(prompt_auto(st.session_state.topics), api_key)
