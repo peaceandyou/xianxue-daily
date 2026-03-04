@@ -76,12 +76,15 @@ def get_douyin_hot():
     topics = []
     try:
         r = requests.get(
-            "https://api.vvhan.com/api/hotlist?type=douyin",
-            headers={"User-Agent": "Mozilla/5.0"},
+            "https://www.douyin.com/aweme/v1/web/hot/search/list/?device_platform=webapp&aid=6383",
+            headers={
+                "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15",
+                "Referer": "https://www.douyin.com/",
+            },
             timeout=15,
         )
-        for item in r.json().get("data", [])[:20]:
-            t = (item.get("title") or item.get("word") or "").strip()
+        for item in r.json().get("data", {}).get("word_list", [])[:20]:
+            t = item.get("word", "").strip()
             if t:
                 topics.append({"topic": t, "source": "抖音热搜"})
     except Exception:
